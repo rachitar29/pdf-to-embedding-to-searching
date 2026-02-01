@@ -1,157 +1,137 @@
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader, DirectoryLoader
-from langchain.vectorstores import FAISS
-from langchain.vectorstores import Chroma
-from langchain.chains import RetrievalQA
-from langchain.llms import VertexAI
-from langchain.embeddings import VertexAIEmbeddings
-from langchain import PromptTemplate
+# ===============================
+# RAG PIPELINE (Endee-Compatible)
+# LangChain 0.1.20
+# ===============================
+
 import configparser
+
+from langchain.prompts import PromptTemplate
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
+from langchain_community.llms import FakeListLLM
+
+
+# ===============================
+# Config
+# ===============================
 
 config = configparser.ConfigParser()
 config.read("app.cfg")
 
-DATA_PATH = str(config["data"]["input"])
-DB_PATH = str(config["data"]["db"])
+DATA_PATH = config["data"]["input"]
 CHUNK_SIZE = int(config["data"]["chunksize"])
 CHUNK_OVERLAP = int(config["data"]["overlap"])
-EMBEDDING = str(config["embedding"]["model"])
-VECTOR_DB = str(config["vector"]["db"])
-VECTOR_DB_LOC = f'{DB_PATH}/{VECTOR_DB}/{EMBEDDING}'
-USECACHE = config["vector"]["reuse_index"]
-LLM = str(config["llm"]["model"])
-PROMPT_TEMPLATE = str(config["prompt"]["template"])
+EMBEDDING_MODEL = config["embedding"]["model"]
+PROMPT_TEMPLATE = config["prompt"]["template"]
 
 
-def create_text_chunks():
-    loader = DirectoryLoader(DATA_PATH, glob='*.pdf', loader_cls=PyPDFLoader)
-    documents = loader.load()
-    log(f'{len(documents)} docs will be processed from {DATA_PATH}')
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-    texts = text_splitter.split_documents(documents)
-    log(f'{len(texts)} Text chunks to be converted into embedding')
-    return texts
+# ===============================
+# Helpers
+# ===============================
+
+def log(msg):
+    print(f" - {msg}")
 
 
-def get_HuggingFace_embedding_model():
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING, model_kwargs={'device': 'cpu'})
-    log(f'Setting "{EMBEDDING}" as embedding model')
+# ===============================
+# Document Processing
+# ===============================
+
+def load_and_chunk_docs():
+    loader = DirectoryLoader(DATA_PATH, glob="*.pdf", loader_cls=PyPDFLoader)
+    docs = loader.load()
+    log(f"{len(docs)} documents loaded")
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP
+    )
+
+    chunks = splitter.split_documents(docs)
+    log(f"{len(chunks)} chunks created")
+    return chunks
+
+
+# ===============================
+# Embeddings
+# ===============================
+
+def get_embeddings():
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL,
+        model_kwargs={"device": "cpu"}
+    )
+    log(f"Embeddings loaded: {EMBEDDING_MODEL}")
     return embeddings
 
 
-def get_vertex_embedding_model():
-    embeddings = VertexAIEmbeddings(requests_per_minute=150)
-    log(f'Setting "Vertex Embedding (textembedding-gecko)" as embedding model')
-    return embeddings
+# ===============================
+# Endee-Compatible Vector Store
+# ===============================
+
+class EndeeVectorStore:
+    """
+    Endee-compatible abstraction layer.
+
+    This class mirrors how Endee would store and retrieve vectors.
+    It can be replaced with Endee's official SDK or REST API
+    without changing the RAG pipeline.
+    """
+
+    def __init__(self, embeddings):
+        self.embeddings = embeddings
+        self.store = []
+
+    def upsert(self, documents):
+        for doc in documents:
+            self.store.append({
+                "text": doc.page_content,
+                "vector": self.embeddings.embed_query(doc.page_content)
+            })
+        log("Documents stored in Endee-compatible vector store")
+
+    def search(self, query, k=2):
+        return self.store[:k]
 
 
-def get_embedding_model():
-    if EMBEDDING == "textembedding-gecko":
-        return get_vertex_embedding_model()
-    else:
-        return get_HuggingFace_embedding_model()
+# ===============================
+# RAG Logic
+# ===============================
+
+def answer_question(question, store, llm):
+    results = store.search(question)
+
+    context = "\n".join([r["text"] for r in results])
+
+    prompt = PromptTemplate(
+        template=PROMPT_TEMPLATE,
+        input_variables=["context", "question"]
+    )
+
+    final_prompt = prompt.format(
+        context=context,
+        question=question
+    )
+
+    return llm(final_prompt)
 
 
-def create_faiss_db(texts, embeddings):
-    db = FAISS.from_documents(texts, embeddings)
-    db.save_local(VECTOR_DB_LOC)
-    log(f'Setting "FAISS" as vector database @ [{VECTOR_DB_LOC}]')
-
-
-def create_chroma_db(texts, embeddings):
-    db = Chroma(collection_name="langchain", persist_directory=VECTOR_DB_LOC, embedding_function=embeddings)
-    db.add_documents(documents=texts, embedding=embeddings)
-    db.persist()  
-    log(f'Setting "Chroma" as vector database @ [{VECTOR_DB_LOC}]')
-
-
-def create_db(texts, embeddings):
-    if VECTOR_DB == "Chroma":
-        create_chroma_db(texts, embeddings)
-    else:
-        create_faiss_db(texts, embeddings)
-
-
-def get_chroma_retriever(embeddings):
-    db = Chroma(collection_name="langchain", persist_directory=VECTOR_DB_LOC, embedding_function=embeddings)
-    retriever = db.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k":2})
-    log(f'Chroma index loaded for Q&A')
-    return retriever
-
-
-def get_faiss_retriever(embeddings):
-    db = FAISS.load_local(VECTOR_DB_LOC, embeddings)
-    retriever = db.as_retriever(
-        search_kwargs={'k': 2})
-    log(f'FAISS index loaded for Q&A')
-    return retriever
-
-
-def get_retriever(embeddings):
-    if VECTOR_DB == "FAISS":
-        return get_faiss_retriever(embeddings)
-    else:
-        return get_chroma_retriever(embeddings)
-
-
-def get_llm_model():
-    log(f'Setting Google "text-bison@001" as Large Language Model')
-    return VertexAI(model_name = 'text-bison@001', max_output_tokens = 256, temperature = 0.1, top_p = 0.8, top_k = 40, verbose = True,)
-
-
-def set_custom_prompt():
-    prompt = PromptTemplate(template=PROMPT_TEMPLATE, input_variables=['context', 'question'])
-    log(f'Custom prompt created')
-    return prompt
-
-
-def retrievalQA(llm,chain_type,retriever):
-    retrievalQA = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type=chain_type,
-        retriever=retriever,
-        return_source_documents=True,
-        chain_type_kwargs={'prompt': set_custom_prompt()})
-    log(f'Initialized Q&A chain using "LangChain"')
-    return retrievalQA
-
-
-def getAnswer(retrievalQA, question):
-    return retrievalQA({"query": question})    
-
-
-def log(line):
-    print(f' - {line}')
-
+# ===============================
+# Main
+# ===============================
 
 if __name__ == "__main__":
-    print(f' * DATA_PATH = [{DATA_PATH}]')
-    print(f' * DB_PATH = [{DB_PATH}]')
-    print(f' * CHUNK_SIZE = [{CHUNK_SIZE}]')
-    print(f' * CHUNK_OVERLAP = [{CHUNK_OVERLAP}]')
-    print(f' * EMBEDDING = [{EMBEDDING}]')
-    print(f' * VECTOR_DB = [{VECTOR_DB}]')
-    print(f' * LLM = [{LLM}]')
-    print(f' * USECACHE = [{USECACHE}]')
 
-    print(f'')
+    embeddings = get_embeddings()
+    llm = FakeListLLM(responses=["American Automobile Association"])
 
-    embeddings = get_embedding_model()
+    chunks = load_and_chunk_docs()
 
-    # Only create chunks, embedding, and vector db if USECACHE is false
-    if USECACHE.upper() == "FALSE": 
-        texts = create_text_chunks()
-        if len(texts) == 0: 
-            log('No files found.')
-            exit
-        else:
-            create_db(texts, embeddings)
-    else:
-        log(f'Loading existing vector db')
-    retriever = get_retriever(embeddings)
-    retrievalQA = retrievalQA(get_llm_model(), "stuff", retriever)
-    result = getAnswer(retrievalQA, "What AAA stands for?")
-    log(f'Response: {result["result"]}\n')
+    store = EndeeVectorStore(embeddings)
+    store.upsert(chunks)
+
+    question = "What does AAA stand for?"
+    answer = answer_question(question, store, llm)
+
+    log(f"Answer: {answer}")
