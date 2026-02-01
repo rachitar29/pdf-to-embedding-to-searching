@@ -1,165 +1,152 @@
-📄 PDF Question Answering using Endee-Compatible Vector Database (RAG)
-🔍 Project Overview
+# PDF Semantic Search & RAG System (Endee-Compatible)
 
-This project implements a Retrieval-Augmented Generation (RAG) system that allows users to ask natural language questions over a collection of PDF documents.
+## 🔍 Project Overview
 
-The system processes PDFs, splits them into meaningful chunks, converts them into vector embeddings, stores them in an Endee-compatible vector database abstraction, and retrieves relevant context to answer user queries.
+This project implements a **production-oriented Retrieval-Augmented Generation (RAG) system**
+for querying PDF-based knowledge using an **Endee-compatible vector database abstraction**.
 
-The project demonstrates a real-world AI workflow involving:
+The system is designed with a strong focus on:
+- Vector similarity search  
+- Retrieval correctness  
+- Hallucination prevention  
 
-Document ingestion
+These are core challenges in **real-world AI infrastructure and semantic search systems**.
 
-Semantic search
+---
 
-Vector databases
+## 🧠 System Design & Workflow
 
-Retrieval-based question answering
+The system follows a **vector-database-centric architecture**, inspired by Endee’s design principles:
 
-🎯 Problem Statement
+1. PDF documents are ingested and converted into semantic vectors  
+2. Vectors are stored in a **decoupled vector store layer**  
+3. User queries are embedded using the same embedding model  
+4. Similarity search retrieves the most relevant chunks  
+5. Only **high-confidence results** are passed to the language model  
+6. Guardrails ensure answers are grounded strictly in retrieved content  
 
-Traditional keyword-based search fails to capture semantic meaning in documents.
+This design mirrors how modern AI systems integrate vector databases into RAG pipelines.
 
-This project solves that problem by:
+---
 
-Converting document text into vector embeddings
+## 🧩 Endee Compatibility & Design Alignment
 
-Performing similarity-based retrieval
+This project is **explicitly designed around an Endee-compatible vector database abstraction**.
 
-Using retrieved context to generate accurate answers
+- The vector store exposes `upsert()` and `search()` interfaces that mirror Endee-style APIs  
+- Similarity scoring, thresholding, and retrieval logic are implemented independently of the application layer  
+- The storage backend is fully decoupled from the RAG pipeline logic  
 
-This approach is suitable for applications such as:
+As a result, the current in-memory vector store can be replaced with a **production Endee backend
+(SDK or REST API)** with **no changes** to the core RAG logic.
 
-Document search
+This reflects real-world AI infrastructure patterns used in scalable semantic search and retrieval systems.
 
-Knowledge base Q&A
+---
 
-AI-powered assistants
+## 🚫 Hallucination Prevention Strategy
 
-Enterprise document analysis
+The system includes multiple safeguards to prevent hallucinated answers:
 
-🧠 System Design / Technical Approach
-High-Level Pipeline
+- Similarity score thresholding to reject weak or irrelevant retrievals  
+- Keyword-to-context validation before invoking the LLM  
+- Prompt-level constraints enforcing **PDF-only answers**  
+- Hard fallback responses when context relevance is insufficient  
 
-PDF Loading
+If the answer cannot be grounded in retrieved PDF content, the system safely responds:
 
-PDFs are loaded from the input/ directory
+> **"I could not find the answer in the provided PDF."**
 
-Text Chunking
+---
 
-Documents are split into overlapping chunks for better semantic coverage
+## 🛠️ Technology Stack
 
-Embedding Generation
+| Component       | Technologies Used |
+|----------------|-------------------|
+| Language Model | GCP Vertex AI PaLM (text-bison) / HuggingFace models |
+| Embeddings     | Sentence Transformers, Vertex AI (textembedding-gecko) |
+| Vector Store   | Endee-Compatible In-Memory Vector Store |
+| Frameworks     | LangChain, Chainlit, PyPDF |
+| Language       | Python |
 
-Each chunk is converted into a vector using a Sentence Transformer model
+> **Note:** Local vector storage is used for evaluation.  
+> The architecture is designed for direct replacement with Endee’s production vector database.
 
-Vector Storage (Endee-Compatible)
+---
 
-Vectors are stored in an Endee-compatible abstraction layer
+## 📂 Project Structure
 
-Semantic Retrieval
-
-Top relevant chunks are retrieved using vector similarity
-
-Answer Generation
-
-Retrieved context is passed into a prompt template to generate answers
-
-🧩 How Endee is Used
-Endee Vector Database Integration
-
-This project uses an Endee-compatible vector database abstraction layer.
-
-The vector storage layer follows Endee’s conceptual design:
-
-Embedding-based vector storage
-
-Similarity-based retrieval
-
-Decoupled vector database interface
-
-Due to the absence of publicly available Endee API credentials at the time of development, a local Endee-compatible vector store is used for testing and demonstration.
-
-Why this approach is valid
-
-The abstraction mirrors how Endee stores and retrieves vectors
-
-The RAG pipeline is decoupled from the storage layer
-
-The local store can be directly replaced with Endee’s official SDK or REST API
-
-No changes are required in the retrieval or generation logic
-
-This ensures full architectural compatibility with Endee while maintaining a working end-to-end system.
-
-🛠️ Technologies Used
-
-Python
-
-LangChain
-
-Sentence Transformers
-
-Vector Embeddings
-
-Retrieval-Augmented Generation (RAG)
-
-Endee-compatible Vector Store
-
-📂 Project Structure
+```text
 pdf-to-embedding-to-search/
-│
-├── app.py              # Main RAG pipeline
-├── app.cfg             # Configuration file
-├── input/              # PDF documents
-├── output/             # (Optional) processed data
-├── requirements.txt    # Dependencies
-├── README.md           # Project documentation
+├── app.py              # Core RAG pipeline logic
+├── chatbot.py          # Chainlit-powered conversational UI
+├── app.cfg             # Configuration for models and vector store
+├── requirements.txt    # Project dependencies
+├── input/              # Source PDF documents
+├── output/             # Processed embeddings and metadata
+└── test/
+    └── bulktest.py     # Retrieval and accuracy evaluation script
+
+```
 ⚙️ Setup & Execution Instructions
-1️⃣ Clone the Repository
-git clone <your-github-repo-link>
-cd pdf-to-embedding-to-search
-2️⃣ Install Dependencies
+1. Clone & Initialize
+git clone https://github.com/rachitar29/pdf-to-embedding-to-searching.git
+cd pdf-to-embedding-to-searching
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-3️⃣ Add PDF Files
+2. Configure Environment
 
-Place your PDF documents inside the input/ folder.
+Create required directories:
 
-4️⃣ Run the Application
+mkdir input output
+
+Add PDF documents to the input/ directory.
+
+(Optional) Authenticate GCP if using Vertex AI:
+
+gcloud auth application-default login
+3. Run the Application
+
+
+Run the core pipeline:
+```
 python app.py
-5️⃣ Example Output
-- Documents loaded
-- Chunks created
-- Documents stored in Endee-compatible vector store
-- Answer: American Automobile Association
-🚀 Example Query
-Question: What does AAA stand for?
-Answer: American Automobile Association
-📈 What This Project Demonstrates
+```
+Run the interactive chatbot:
+```
+chainlit run chatbot.py
+```
+Run evaluation tests:
+```
+python test/bulktest.py
+```
+Testing & Evaluation
 
-Practical use of vector databases
+The project includes a dedicated evaluation script (test/bulktest.py) to assess:
 
-End-to-end RAG pipeline
+Retrieval quality using similarity scores
 
-Semantic document retrieval
+LLM response accuracy against ground-truth answers
 
-AI system design thinking
+Impact of chunk size and embedding model selection
 
-Endee-compatible vector architecture
+This enables iterative tuning of retrieval precision and recall.
 
-🔮 Future Enhancements
+🔮 Future Roadmap
 
-Direct integration with Endee REST API or SDK
+Direct integration with Endee’s production vector database via REST or SDK
 
-Support for multiple queries
+Hybrid retrieval combining keyword (BM25) and vector search
 
-Web-based interface
+Latency and scalability benchmarking
 
-Scalable vector indexing
+Advanced UI for document ingestion and monitoring
 
-Integration with real LLMs (OpenAI, Gemini, etc.)
+📚 References
 
-🏁 Conclusion
+Retrieval-Augmented Generation (RAG) Research Paper
 
-This project demonstrates a production-ready RAG architecture with a vector database design compatible with Endee.
+Endee Vector Database Documentation
 
-It showcases real-world AI engineering skills, clean abstraction design, and scalable retrieval workflows—making it suitable for internship evaluation and further extension.
+Sentence Transformers (Hugging Face)
